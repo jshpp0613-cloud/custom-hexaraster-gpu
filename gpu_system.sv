@@ -11,14 +11,14 @@ module gpu_system (
 
     // Transform + hex config
     input  logic [31:0] matrix [0:3][0:3],
-    input  logic [31:0] hex_size_q16,
+    input  logic [31:0] hex_size_q16, // 1.6 px in Q16.16
 
     // Frame control
     input  logic        frame_start,
 
     // Host memory interface
     output logic [31:0] mem_addr,
-    output logic [63:0] mem_data,
+    output logic [639:0] mem_data, // 10 hexes × 64 bits
     output logic        mem_we,
     input  logic        mem_ready,
     input  logic [31:0] buffer_base
@@ -32,16 +32,16 @@ module gpu_system (
     logic [7:0]  lod;
     logic        vs_valid, rast_valid;
 
-    logic signed [15:0] q, r;
-    logic [7:0] depth;
+    logic signed [15:0] q[0:9], r[0:9];
+    logic [7:0] depth[0:9];
 
     // Handshake
     logic vs_ready, rast_ready;
 
     // =========================
-    // Vertex Shader (Hex-aware)
+    // Vertex Shader
     // =========================
-    vertex_shader_hex_fixed vs (
+    vertex_shader_hex vs (
         .clk(clk),
         .reset(reset),
         .valid_in(in_valid),
@@ -62,9 +62,9 @@ module gpu_system (
     );
 
     // =========================
-    // Hex Rasterizer (stall-safe)
+    // Rasterizer (produces 10 hexes per cycle)
     // =========================
-    hexagonal_rasterizer hr (
+    hexagonal_rasterizer_10 hr (
         .clk(clk),
         .reset(reset),
         .valid_in(vs_valid),
@@ -77,18 +77,18 @@ module gpu_system (
         .r(r),
         .depth(depth),
         .valid_out(rast_valid),
-        .ready_out(vs_ready) // propagate backpressure to shader
+        .ready_out(vs_ready)
     );
 
     // =========================
-    // Host-backed Output Writer
+    // Host-backed Output Writer (10 hexes per cycle)
     // =========================
-    hex_event_writer writer (
+    hex_event_writer_10 writer (
         .clk(clk),
         .reset(reset),
         .frame_start(frame_start),
         .valid_in(rast_valid),
-        .ready_in(mem_ready), // stall if memory is busy
+        .ready_in(mem_ready),
         .q(q),
         .r(r),
         .depth(depth),
@@ -98,7 +98,7 @@ module gpu_system (
         .mem_we(mem_we),
         .mem_ready(mem_ready),
         .buffer_base(buffer_base),
-        .ready_out(rast_ready) // backpressure to rasterizer
+        .ready_out(rast_ready)
     );
 
 endmodule
