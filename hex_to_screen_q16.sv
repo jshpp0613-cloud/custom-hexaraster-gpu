@@ -1,56 +1,67 @@
-module hex_to_screen_q16 (
-    input  logic        clk,
-    input  logic        reset,
+module hex_to_screen_q16_batch #(
+    parameter BATCH = 10
+)(
+    input  logic                  clk,
+    input  logic                  reset,
+    input  logic                  valid_in,
 
-    input  logic        valid_in,
-    input  logic        ready_in,
-    output logic        ready_out,
-
-    // Hex axial (Q16.16)
-    input  logic signed [31:0] q_f,
-    input  logic signed [31:0] r_f,
+    // Axial hex coords (integers)
+    input  logic signed [15:0]    q [0:BATCH-1],
+    input  logic signed [15:0]    r [0:BATCH-1],
+    input  logic signed [15:0]    s [0:BATCH-1],
 
     // Config
-    input  logic signed [31:0] hex_size_q16,
-    input  logic signed [31:0] cam_x_q16,
-    input  logic signed [31:0] cam_y_q16,
-    input  logic signed [31:0] zoom_q16,
+    input  logic                  pointy_top,
+    input  logic signed [31:0]   hex_size_q16, // Q16.16
+    input  logic signed [31:0]   cam_x_q16,
+    input  logic signed [31:0]   cam_y_q16,
+    input  logic signed [31:0]   zoom_q16,     // Q16.16
 
-    // Screen (Q16.16)
-    output logic signed [31:0] screen_x_q16,
-    output logic signed [31:0] screen_y_q16,
+    input  logic                  snap_to_center,
 
-    output logic        valid_out
+    // Screen output (Q16.16)
+    output logic signed [31:0]   screen_x_q16 [0:BATCH-1],
+    output logic signed [31:0]   screen_y_q16 [0:BATCH-1],
+    output logic                  valid_out
 );
 
-    localparam signed [31:0] SQRT3 = 32'sd113512; // √3 Q16.16
-    localparam signed [31:0] THREE_DIV_2 = 32'sd98304;
+    // Q16.16 constants
+    localparam int SQRT3_Q      = 32'd113512;
+    localparam int THREE_DIV2_Q = 32'd98304;
+    localparam int ONE_DIV2_Q   = 32'd32768;
 
-    logic signed [63:0] hx, hy;
+    integer i;
+    logic signed [63:0] hx_tmp, hy_tmp;
 
     always_ff @(posedge clk) begin
         if (reset) begin
-            valid_out <= 1'b0;
-            ready_out <= 1'b1;
-        end
-        else if (valid_in && ready_in) begin
-            // hex → local
-            hx <= (SQRT3 * (q_f + (r_f >>> 1))) >>> 16;
-            hy <= (THREE_DIV_2 * r_f) >>> 16;
+            valid_out <= 0;
+        end else if (valid_in) begin
+            for (i=0; i<BATCH; i=i+1) begin
+                if (pointy_top) begin
+                    hx_tmp = (q[i] <<< 16) + (r[i] * ONE_DIV2_Q);
+                    hx_tmp = (hx_tmp * SQRT3_Q) >>> 16;
+                    hx_tmp = (hx_tmp * hex_size_q16) >>> 16;
 
-            hx <= (hx * hex_size_q16) >>> 16;
-            hy <= (hy * hex_size_q16) >>> 16;
+                    hy_tmp = (r[i] * THREE_DIV2_Q);
+                    hy_tmp = (hy_tmp * hex_size_q16) >>> 16;
+                end else begin
+                    hx_tmp = (q[i] * THREE_DIV2_Q);
+                    hx_tmp = (hx_tmp * hex_size_q16) >>> 16;
 
-            // camera + zoom
-            screen_x_q16 <= ((hx - cam_x_q16) * zoom_q16) >>> 16;
-            screen_y_q16 <= ((hy - cam_y_q16) * zoom_q16) >>> 16;
+                    hy_tmp = (r[i] <<< 16) + (q[i] * ONE_DIV2_Q);
+                    hy_tmp = (hy_tmp * SQRT3_Q) >>> 16;
+                    hy_tmp = (hy_tmp * hex_size_q16) >>> 16;
+                end
 
-            valid_out <= 1'b1;
-            ready_out <= ready_in;
-        end
-        else begin
-            valid_out <= 1'b0;
-            ready_out <= ready_in;
+                // Camera transform
+                screen_x_q16[i] <= ((hx_tmp[31:0] - cam_x_q16) * zoom_q16) >>> 16;
+                screen_y_q16[i] <= ((hy_tmp[31:0] - cam_y_q16) * zoom_q16) >>> 16;
+            end
+            valid_out <= 1;
+        end else begin
+            valid_out <= 0;
         end
     end
+
 endmodule
