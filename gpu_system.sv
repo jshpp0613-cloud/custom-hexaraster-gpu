@@ -1,24 +1,30 @@
-module gpu_system_q16 #(
-    parameter BATCH = 10
+module gpu_system_q16_top #(
+    parameter BATCH = 10,
+    parameter MEM_DEPTH = 256
 )(
-    input  logic         clk,
-    input  logic         reset,
+    input  logic                  clk,
+    input  logic                  reset,
 
-    input  logic         in_valid,
-    input  logic [31:0]  vertex_x [0:BATCH-1], // Q16.16
-    input  logic [31:0]  vertex_y [0:BATCH-1], // Q16.16
-    input  logic [31:0]  vertex_z [0:BATCH-1], // Q16.16
+    // Vertex input (batch)
+    input  logic                  in_valid,
+    input  logic [31:0]           vertex_x [0:BATCH-1],  // Q16.16
+    input  logic [31:0]           vertex_y [0:BATCH-1],  // Q16.16
+    input  logic [31:0]           vertex_z [0:BATCH-1],  // Q16.16
 
-    input  logic [31:0]  matrix [0:3][0:3],   // Q16.16
-    input  logic [31:0]  hex_size_q16,        // Q16.16
+    // Transform
+    input  logic [31:0]           matrix [0:3][0:3],     // Q16.16
+    input  logic [31:0]           hex_size_q16,          // Q16.16
 
-    input  logic         frame_start,
+    input  logic                  frame_start,
 
-    output logic [63:0]  mem [0:255],
-    output logic [31:0]  mem_write_count
+    // Host memory interface
+    output logic [63:0]           mem [0:MEM_DEPTH-1],
+    output logic [31:0]           mem_write_count
 );
 
-    // Vertex shader outputs
+    // -------------------------
+    // Vertex Shader outputs
+    // -------------------------
     logic [31:0] screen_x [0:BATCH-1];
     logic [31:0] screen_y [0:BATCH-1];
     logic [31:0] hex_q_f [0:BATCH-1];
@@ -27,15 +33,17 @@ module gpu_system_q16 #(
     logic [7:0]  hex_lod [0:BATCH-1];
     logic        vs_valid;
 
+    // -------------------------
     // Rasterizer outputs
-    logic [15:0] q [0:BATCH-1];
-    logic [15:0] r [0:BATCH-1];
-    logic [7:0]  depth [0:BATCH-1];
-    logic        rast_valid;
+    // -------------------------
+    logic signed [15:0] q [0:BATCH-1];
+    logic signed [15:0] r [0:BATCH-1];
+    logic [7:0]         depth [0:BATCH-1];
+    logic               rast_valid;
 
-    // =========================
+    // -------------------------
     // Vertex Shader
-    // =========================
+    // -------------------------
     vertex_shader_hex_q16 #(.BATCH(BATCH)) vs (
         .clk(clk),
         .reset(reset),
@@ -54,9 +62,9 @@ module gpu_system_q16 #(
         .valid_out(vs_valid)
     );
 
-    // =========================
+    // -------------------------
     // Hex Rasterizer
-    // =========================
+    // -------------------------
     hexagonal_rasterizer_q16 #(.BATCH(BATCH)) hr (
         .clk(clk),
         .reset(reset),
@@ -70,10 +78,10 @@ module gpu_system_q16 #(
         .valid_out(rast_valid)
     );
 
-    // =========================
+    // -------------------------
     // Event Writer
-    // =========================
-    hex_event_writer #(.WIDTH(64), .DEPTH(256)) writer (
+    // -------------------------
+    hex_event_writer #(.BATCH(BATCH), .DEPTH(MEM_DEPTH)) writer (
         .clk(clk),
         .reset(reset),
         .frame_start(frame_start),
