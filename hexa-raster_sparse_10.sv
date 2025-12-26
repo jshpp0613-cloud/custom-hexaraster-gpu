@@ -1,71 +1,48 @@
-module hexagonal_rasterizer_q16_correct #(
-    parameter BATCH = 10
+module hexagonal_rasterizer_fill #(
+    parameter RADIUS = 2,
+    parameter MAX_OUT = 64   // worst-case: 1 + 3R(R+1)
 )(
-    input  logic                  clk,
-    input  logic                  reset,
-    input  logic                  valid_in,
+    input  logic               clk,
+    input  logic               reset,
+    input  logic               valid_in,
 
-    // Q16.16 cube coordinates
-    input  logic signed [31:0]    q_f [0:BATCH-1],
-    input  logic signed [31:0]    r_f [0:BATCH-1],
-    input  logic signed [31:0]    s_f [0:BATCH-1],
+    // Rounded center hex
+    input  logic signed [15:0] q_center,
+    input  logic signed [15:0] r_center,
 
-    output logic signed [15:0]    q [0:BATCH-1],
-    output logic signed [15:0]    r [0:BATCH-1],
-    output logic [7:0]            depth [0:BATCH-1],
-    output logic                  valid_out
+    output logic signed [15:0] q_out [0:MAX_OUT-1],
+    output logic signed [15:0] r_out [0:MAX_OUT-1],
+    output logic [7:0]         depth [0:MAX_OUT-1],
+    output logic [7:0]         count,
+    output logic               valid_out
 );
 
-    integer i;
-
-    // helpers
-    logic signed [31:0] qi, ri, si;
-    logic signed [31:0] dq, dr, ds;
+    integer dq, dr;
+    integer idx;
 
     always_ff @(posedge clk) begin
         if (reset) begin
             valid_out <= 0;
+            count <= 0;
         end else if (valid_in) begin
-            for (i = 0; i < BATCH; i++) begin
-                // -------------------------
-                // Step 1: round Q16.16 → int
-                // -------------------------
-                qi = q_f[i] + 32'sh00008000; // +0.5
-                ri = r_f[i] + 32'sh00008000;
-                si = s_f[i] + 32'sh00008000;
+            idx = 0;
 
-                qi = qi >>> 16;
-                ri = ri >>> 16;
-                si = si >>> 16;
-
-                // -------------------------
-                // Step 2: error magnitudes
-                // -------------------------
-                dq = (qi <<< 16) - q_f[i];
-                dr = (ri <<< 16) - r_f[i];
-                ds = (si <<< 16) - s_f[i];
-
-                if (dq < 0) dq = -dq;
-                if (dr < 0) dr = -dr;
-                if (ds < 0) ds = -ds;
-
-                // -------------------------
-                // Step 3: fix largest error
-                // -------------------------
-                if (dq > dr && dq > ds) begin
-                    qi = -ri - si;
-                end else if (dr > ds) begin
-                    ri = -qi - si;
+            for (dq = -RADIUS; dq <= RADIUS; dq = dq + 1) begin
+                for (dr = 
+                    (dq < 0 ? -RADIUS - dq : -RADIUS);
+                    dr <= (dq > 0 ? RADIUS - dq : RADIUS);
+                    dr = dr + 1
+                ) begin
+                    if (idx < MAX_OUT) begin
+                        q_out[idx] <= q_center + dq;
+                        r_out[idx] <= r_center + dr;
+                        depth[idx] <= 8'd0;
+                        idx = idx + 1;
+                    end
                 end
-                // else: si auto-fixed
-
-                // -------------------------
-                // Outputs
-                // -------------------------
-                q[i] <= qi[15:0];
-                r[i] <= ri[15:0];
-                depth[i] <= 8'd0;
             end
+
+            count <= idx[7:0];
             valid_out <= 1;
         end else begin
             valid_out <= 0;
