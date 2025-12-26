@@ -1,60 +1,56 @@
-module vertex_shader_hex_q16 (
-    input  logic        clk,
-    input  logic        reset,
+module vertex_shader_hex_q16 #(
+    parameter BATCH = 10
+)(
+    input  logic         clk,
+    input  logic         reset,
+    input  logic         valid_in,
 
-    input  logic        valid_in,
-    input  logic        ready_in,
-    output logic        ready_out,
+    input  logic [31:0]  x [0:BATCH-1],   // Q16.16
+    input  logic [31:0]  y [0:BATCH-1],   // Q16.16
+    input  logic [31:0]  z [0:BATCH-1],   // Q16.16
+    input  logic [31:0]  matrix [0:3][0:3], // Q16.16
+    input  logic [31:0]  hex_size_q16,    // Q16.16
 
-    // World position (Q16.16)
-    input  logic signed [31:0] x_q16,
-    input  logic signed [31:0] y_q16,
-    input  logic signed [31:0] z_q16,
-
-    // 4x4 transform (Q16.16)
-    input  logic signed [31:0] matrix [0:3][0:3],
-
-    // Hex size (Q16.16)
-    input  logic signed [31:0] hex_size_q16,
-
-    // Hex cube coords (Q16.16)
-    output logic signed [31:0] q_f,
-    output logic signed [31:0] r_f,
-    output logic signed [31:0] s_f,
-
-    output logic        valid_out
+    output logic [31:0]  screen_x [0:BATCH-1],  // Q16.16
+    output logic [31:0]  screen_y [0:BATCH-1],  // Q16.16
+    output logic [31:0]  hex_q_f [0:BATCH-1],   // Q16.16
+    output logic [31:0]  hex_r_f [0:BATCH-1],   // Q16.16
+    output logic [31:0]  hex_s_f [0:BATCH-1],   // Q16.16
+    output logic [7:0]   hex_lod [0:BATCH-1],
+    output logic         valid_out
 );
 
-    // constants in Q16.16
-    localparam signed [31:0] SQRT3_DIV_3 = 32'sd37837;  // √3/3
-    localparam signed [31:0] ONE_DIV_3   = 32'sd21845;
-    localparam signed [31:0] TWO_DIV_3   = 32'sd43691;
+    localparam logic [31:0] SQRT3_DIV_3_Q16 = 32'd74565;   // ~sqrt(3)/3 in Q16.16
+    localparam logic [31:0] ONE_DIV_3_Q16   = 32'd21845;   // 1/3 in Q16.16
+    localparam logic [31:0] TWO_DIV_3_Q16   = 32'd43690;   // 2/3 in Q16.16
 
-    logic signed [63:0] wx, wy;
+    integer i;
+    logic signed [63:0] wx_tmp, wy_tmp;
 
     always_ff @(posedge clk) begin
         if (reset) begin
-            valid_out <= 1'b0;
-            ready_out <= 1'b1;
-        end
-        else if (valid_in && ready_in) begin
-            // world → local
-            wx <= matrix[0][0]*x_q16 + matrix[0][1]*y_q16 +
-                  matrix[0][2]*z_q16 + matrix[0][3];
-            wy <= matrix[1][0]*x_q16 + matrix[1][1]*y_q16 +
-                  matrix[1][2]*z_q16 + matrix[1][3];
+            valid_out <= 0;
+        end else if (valid_in) begin
+            for (i=0; i<BATCH; i=i+1) begin
+                // Vertex transform in Q16.16
+                wx_tmp = (x[i]*matrix[0][0] + y[i]*matrix[0][1] + z[i]*matrix[0][2] + matrix[0][3]);
+                wy_tmp = (x[i]*matrix[1][0] + y[i]*matrix[1][1] + z[i]*matrix[1][2] + matrix[1][3]);
 
-            // axial hex (pointy-top)
-            q_f <= ((SQRT3_DIV_3 * wx - ONE_DIV_3 * wy) >>> 16) / hex_size_q16;
-            r_f <= ((TWO_DIV_3 * wy) >>> 16) / hex_size_q16;
-            s_f <= -(q_f + r_f);
+                screen_x[i] = wx_tmp[47:16]; // truncate back to Q16.16
+                screen_y[i] = wy_tmp[47:16];
 
-            valid_out <= 1'b1;
-            ready_out <= ready_in;
-        end
-        else begin
-            valid_out <= 1'b0;
-            ready_out <= ready_in;
+                // Hex coordinates in Q16.16
+                hex_q_f[i] = ((SQRT3_DIV_3_Q16 * screen_x[i] - ONE_DIV_3_Q16 * screen_y[i]) <<< 0) / hex_size_q16;
+                hex_r_f[i] = ((TWO_DIV_3_Q16 * screen_y[i]) <<< 0) / hex_size_q16;
+                hex_s_f[i] = -(hex_q_f[i] + hex_r_f[i]);
+
+                // Simple LOD
+                hex_lod[i] = ((screen_x[i]*screen_x[i] + screen_y[i]*screen_y[i]) > 32'h4F000000) ? 8'd3 : 8'd1;
+            end
+            valid_out <= 1;
+        end else begin
+            valid_out <= 0;
         end
     end
+
 endmodule
